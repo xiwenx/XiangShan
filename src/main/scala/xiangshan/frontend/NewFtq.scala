@@ -660,6 +660,7 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   io.toIfu.req.bits.ftqIdx := ifuPtr
  
   val toICachePcBundle = Wire(Vec(copyNum,new Ftq_RF_Components))
+  val toICacheReadValid = Wire(Vec(copyNum,Bool()))
   val toIfuPcBundle = Wire(new Ftq_RF_Components)
   val entry_is_to_send = WireInit(entry_fetch_status(ifuPtr.value) === f_to_send)
   val entry_ftq_offset = WireInit(cfiIndex_vec(ifuPtr.value))
@@ -669,13 +670,19 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   val pc_mem_ifu_plus1_rdata = VecInit(Seq.fill(copyNum)(RegNext(ftq_pc_mem.io.ifuPtrPlus1_rdata)))
   val diff_entry_next_addr = WireInit(update_target(ifuPtr.value)) //TODO: remove this
 
+  val copied_ifu_plus1_to_send = VecInit(Seq.fill(copyNum)(RegNext(entry_fetch_status(ifuPtrPlus1.value) === f_to_send) || RegNext(last_cycle_bpu_in && bpu_in_bypass_ptr === (ifuPtrPlus1))))
+  val copied_ifu_ptr_to_send   = VecInit(Seq.fill(copyNum)(RegNext(entry_fetch_status(ifuPtrPlus1.value) === f_to_send) || RegNext(last_cycle_bpu_in && bpu_in_bypass_ptr === ifuPtr)))
+  
   for(i <- 0 until copyNum){
     when(copied_last_cycle_bpu_in(i) && copied_bpu_in_bypass_ptr(i) === copied_ifu_ptr(i)){
-      toICachePcBundle(i) := copied_bpu_in_bypass_buf(i) 
+      toICachePcBundle(i) := copied_bpu_in_bypass_buf(i)
+      toICacheReadValid(i)   := true.B 
     }.elsewhen(copied_last_cycle_to_ifu_fire(i)){
       toICachePcBundle(i) := pc_mem_ifu_plus1_rdata(i)
+      toICacheReadValid(i)   := copied_ifu_plus1_to_send(i)
     }.otherwise{
       toICachePcBundle(i) := pc_mem_ifu_ptr_rdata(i) 
+      toICacheReadValid(i)   := copied_ifu_ptr_to_send(i)
     }
   }
 
@@ -712,6 +719,7 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   io.toIfu.req.bits.fromFtqPcBundle(toIfuPcBundle)
 
   io.toICache.req.valid := entry_is_to_send && ifuPtr =/= bpuPtr
+  io.toICache.req.bits.readValid := toICacheReadValid
   io.toICache.req.bits.pcMemRead.zipWithIndex.map{case(copy,i) => copy.fromFtqPcBundle(toICachePcBundle(i))}
   // io.toICache.req.bits.bypassSelect := last_cycle_bpu_in && bpu_in_bypass_ptr === ifuPtr
   // io.toICache.req.bits.bpuBypassWrite.zipWithIndex.map{case(bypassWrtie, i) =>
