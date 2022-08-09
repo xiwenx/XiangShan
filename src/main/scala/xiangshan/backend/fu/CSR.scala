@@ -27,6 +27,7 @@ import xiangshan.ExceptionNO._
 import xiangshan._
 import xiangshan.backend.fu.util._
 import xiangshan.cache._
+import freechips.rocketchip.util.AsyncResetSynchronizerShiftReg
 
 // Trigger Tdata1 bundles
 trait HasTriggerConst {
@@ -385,14 +386,14 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
   val mipFixMask = ZeroExt(GenMask(9) | GenMask(5) | GenMask(1), XLEN)
   val mip = (mipWire.asUInt | mipReg).asTypeOf(new Interrupt)
 
-  def getMisaMxl(mxl: Int): UInt = {mxl.U << (XLEN-2)}.asUInt
-  def getMisaExt(ext: Char): UInt = {1.U << (ext.toInt - 'a'.toInt)}.asUInt
+  def getMisaMxl(mxl: BigInt): BigInt = mxl << (XLEN - 2)
+  def getMisaExt(ext: Char): Long = 1 << (ext.toInt - 'a'.toInt)
   var extList = List('a', 's', 'i', 'u')
   if (HasMExtension) { extList = extList :+ 'm' }
   if (HasCExtension) { extList = extList :+ 'c' }
   if (HasFPU) { extList = extList ++ List('f', 'd') }
-  val misaInitVal = getMisaMxl(2) | extList.foldLeft(0.U)((sum, i) => sum | getMisaExt(i)) //"h8000000000141105".U
-  val misa = RegInit(UInt(XLEN.W), misaInitVal)
+  val misaInitVal = getMisaMxl(2) | extList.foldLeft(0L)((sum, i) => sum | getMisaExt(i)) //"h8000000000141105".U
+  val misa = RegInit(UInt(XLEN.W), misaInitVal.U)
 
   // MXL = 2          | 0 | EXT = b 00 0000 0100 0001 0001 0000 0101
   // (XLEN-1, XLEN-2) |   |(25, 0)  ZY XWVU TSRQ PONM LKJI HGFE DCBA
@@ -400,7 +401,10 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
   val mvendorid = RegInit(UInt(XLEN.W), 0.U) // this is a non-commercial implementation
   val marchid = RegInit(UInt(XLEN.W), 25.U) // architecture id for XiangShan is 25; see https://github.com/riscv/riscv-isa-manual/blob/master/marchid.md
   val mimpid = RegInit(UInt(XLEN.W), 0.U) // provides a unique encoding of the version of the processor implementation
-  val mhartid = RegInit(UInt(XLEN.W), csrio.hartId) // the hardware thread running the code
+  val mhartid = Reg(UInt(XLEN.W)) // the hardware thread running the code
+  when (RegNext(RegNext(reset.asBool) && !reset.asBool)) {
+    mhartid := csrio.hartId
+  }
   val mconfigptr = RegInit(UInt(XLEN.W), 0.U) // the read-only pointer pointing to the platform config structure, 0 for not supported.
   val mstatus = RegInit("ha00002000".U(XLEN.W))
 
@@ -517,7 +521,10 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
   csrio.customCtrl.dsid := sdsid
 
   // slvpredctl: load violation predict settings
-  val slvpredctl = RegInit(UInt(XLEN.W), "h70".U) // default reset period: 2^17
+  // Default reset period: 2^16
+  // Why this number: reset more frequently while keeping the overhead low
+  // Overhead: extra two redirections in every 64K cycles => ~0.1% overhead
+  val slvpredctl = RegInit(UInt(XLEN.W), "h60".U)
   csrio.customCtrl.lvpred_disable := slvpredctl(0)
   csrio.customCtrl.no_spec_load := slvpredctl(1)
   csrio.customCtrl.storeset_wait_store := slvpredctl(2)
@@ -527,11 +534,11 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
   // smblockctl: memory block configurations
   // bits 0-3: store buffer flush threshold (default: 8 entries)
   val smblockctl_init_val =
-    ("hf".U & StoreBufferThreshold.U) |
-    (EnableLdVioCheckAfterReset.B.asUInt << 4) |
-    (EnableSoftPrefetchAfterReset.B.asUInt << 5) |
-    (EnableCacheErrorAfterReset.B.asUInt << 6)
-  val smblockctl = RegInit(UInt(XLEN.W), smblockctl_init_val)
+    (0xf & StoreBufferThreshold) |
+    (EnableLdVioCheckAfterReset.toInt << 4) |
+    (EnableSoftPrefetchAfterReset.toInt << 5) |
+    (EnableCacheErrorAfterReset.toInt << 6)
+  val smblockctl = RegInit(UInt(XLEN.W), smblockctl_init_val.U)
   csrio.customCtrl.sbuffer_threshold := smblockctl(3, 0)
   // bits 4: enable load load violation check
   csrio.customCtrl.ldld_vio_check_enable := smblockctl(4)
@@ -777,7 +784,8 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
   ))
 
   val addrInPerfCnt = (addr >= Mcycle.U) && (addr <= Mhpmcounter31.U) ||
-    (addr >= Mcountinhibit.U) && (addr <= Mhpmevent31.U)
+    (addr >= Mcountinhibit.U) && (addr <= Mhpmevent31.U) ||
+    addr === Mip.U
   csrio.isPerfCnt := addrInPerfCnt && valid && func =/= CSROpType.jmp
 
   // satp wen check
@@ -966,7 +974,8 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
   def priviledgedEnableDetect(x: Bool): Bool = Mux(x, ((priviledgeMode === ModeS) && mstatusStruct.ie.s) || (priviledgeMode < ModeS),
     ((priviledgeMode === ModeM) && mstatusStruct.ie.m) || (priviledgeMode < ModeM))
 
-  val debugIntr = csrio.externalInterrupt.debug & debugIntrEnable
+  val debugIntrSync = AsyncResetSynchronizerShiftReg(csrio.externalInterrupt.debug, 3)
+  val debugIntr = debugIntrSync & debugIntrEnable
   XSDebug(debugIntr, "Debug Mode: debug interrupt is asserted and valid!")
   // send interrupt information to ROB
   val intrVecEnable = Wire(Vec(12, Bool()))
@@ -1184,7 +1193,7 @@ class CSR(implicit p: Parameters) extends FunctionUnit with HasCSRConst with PMP
 
   // Implicit add reset values for mepc[0] and sepc[0]
   // TODO: rewrite mepc and sepc using a struct-like style with the LSB always being 0
-  when (reset.asBool) {
+  when (RegNext(RegNext(reset.asBool) && !reset.asBool)) {
     mepc := Cat(mepc(XLEN - 1, 1), 0.U(1.W))
     sepc := Cat(sepc(XLEN - 1, 1), 0.U(1.W))
   }

@@ -69,6 +69,11 @@ class LqEnqIO(implicit p: Parameters) extends XSBundle {
   val resp = Vec(exuParameters.LsExuCnt, Output(new LqPtr))
 }
 
+class LqPaddrWriteBundle(implicit p: Parameters) extends XSBundle {
+  val paddr = Output(UInt(PAddrBits.W))
+  val lqIdx = Output(new LqPtr)
+}
+
 class LqTriggerIO(implicit p: Parameters) extends XSBundle {
   val hitLoadAddrTriggerHitVec = Input(Vec(3, Bool()))
   val lqLoadAddrTriggerHitVec = Output(Vec(3, Bool()))
@@ -84,11 +89,13 @@ class LoadQueue(implicit p: Parameters) extends XSModule
   val io = IO(new Bundle() {
     val enq = new LqEnqIO
     val brqRedirect = Flipped(ValidIO(new Redirect))
-    val loadIn = Vec(LoadPipelineWidth, Flipped(Valid(new LsPipelineBundle)))
+    val loadPaddrIn = Vec(LoadPipelineWidth, Flipped(Valid(new LqPaddrWriteBundle)))
+    val loadIn = Vec(LoadPipelineWidth, Flipped(Valid(new LqWriteBundle)))
     val storeIn = Vec(StorePipelineWidth, Flipped(Valid(new LsPipelineBundle)))
-    val loadDataForwarded = Vec(LoadPipelineWidth, Input(Bool()))
-    val delayedLoadError = Vec(LoadPipelineWidth, Input(Bool()))
-    val dcacheRequireReplay = Vec(LoadPipelineWidth, Input(Bool()))
+    val s2_load_data_forwarded = Vec(LoadPipelineWidth, Input(Bool()))
+    val s3_delayed_load_error = Vec(LoadPipelineWidth, Input(Bool()))
+    val s2_dcache_require_replay = Vec(LoadPipelineWidth, Input(Bool()))
+    val s3_replay_from_fetch = Vec(LoadPipelineWidth, Input(Bool()))
     val ldout = Vec(2, DecoupledIO(new ExuOutput)) // writeback int load
     val load_s1 = Vec(LoadPipelineWidth, Flipped(new PipeLoadForwardQueryIO)) // TODO: to be renamed
     val loadViolationQuery = Vec(LoadPipelineWidth, Flipped(new LoadViolationQueryIO))
@@ -143,6 +150,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
 
   val release1cycle = io.release
   val release2cycle = RegNext(io.release)
+  val release2cycle_dup_lsu = RegNext(io.release)
 
   /**
     * Enqueue at dispatch
@@ -187,10 +195,12 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     */
   for (i <- 0 until LoadPipelineWidth) {
     dataModule.io.wb.wen(i) := false.B
+    dataModule.io.paddr.wen(i) := false.B
     vaddrTriggerResultModule.io.wen(i) := false.B
     val loadWbIndex = io.loadIn(i).bits.uop.lqIdx.value
 
     // most lq status need to be updated immediately after load writeback to lq
+    // flag bits in lq needs to be updated accurately
     when(io.loadIn(i).fire()) {
       when(io.loadIn(i).bits.miss) {
         XSInfo(io.loadIn(i).valid, "load miss write to lq idx %d pc 0x%x vaddr %x paddr %x data %x mask %x forwardData %x forwardMask: %x mmio %x\n",
@@ -217,15 +227,55 @@ class LoadQueue(implicit p: Parameters) extends XSModule
         io.loadIn(i).bits.mmio
       )}
       if(EnableFastForward){
-        datavalid(loadWbIndex) := (!io.loadIn(i).bits.miss || io.loadDataForwarded(i)) &&
+        datavalid(loadWbIndex) := (!io.loadIn(i).bits.miss || io.s2_load_data_forwarded(i)) &&
           !io.loadIn(i).bits.mmio && // mmio data is not valid until we finished uncache access
-          !io.dcacheRequireReplay(i) // do not writeback if that inst will be resend from rs
+          !io.s2_dcache_require_replay(i) // do not writeback if that inst will be resend from rs
       } else {
-        datavalid(loadWbIndex) := (!io.loadIn(i).bits.miss || io.loadDataForwarded(i)) &&
+        datavalid(loadWbIndex) := (!io.loadIn(i).bits.miss || io.s2_load_data_forwarded(i)) &&
           !io.loadIn(i).bits.mmio // mmio data is not valid until we finished uncache access
       }
       writebacked(loadWbIndex) := !io.loadIn(i).bits.miss && !io.loadIn(i).bits.mmio
 
+      debug_mmio(loadWbIndex) := io.loadIn(i).bits.mmio
+      debug_paddr(loadWbIndex) := io.loadIn(i).bits.paddr
+
+      val dcacheMissed = io.loadIn(i).bits.miss && !io.loadIn(i).bits.mmio
+      if(EnableFastForward){
+        miss(loadWbIndex) := dcacheMissed && !io.s2_load_data_forwarded(i) && !io.s2_dcache_require_replay(i)
+      } else {
+        miss(loadWbIndex) := dcacheMissed && !io.s2_load_data_forwarded(i)
+      }
+      pending(loadWbIndex) := io.loadIn(i).bits.mmio
+      released(loadWbIndex) := release2cycle.valid &&
+        io.loadIn(i).bits.paddr(PAddrBits-1, DCacheLineOffset) === release2cycle.bits.paddr(PAddrBits-1, DCacheLineOffset) ||
+        release1cycle.valid &&
+        io.loadIn(i).bits.paddr(PAddrBits-1, DCacheLineOffset) === release1cycle.bits.paddr(PAddrBits-1, DCacheLineOffset)
+    }
+
+    // data bit in lq can be updated when load_s2 valid
+    // when(io.loadIn(i).bits.lq_data_wen){
+    //   val loadWbData = Wire(new LQDataEntry)
+    //   loadWbData.paddr := io.loadIn(i).bits.paddr
+    //   loadWbData.mask := io.loadIn(i).bits.mask
+    //   loadWbData.data := io.loadIn(i).bits.forwardData.asUInt // fwd data
+    //   loadWbData.fwdMask := io.loadIn(i).bits.forwardMask
+    //   dataModule.io.wbWrite(i, loadWbIndex, loadWbData)
+    //   dataModule.io.wb.wen(i) := true.B
+
+    //   // dirty code for load instr
+    //   uop(loadWbIndex).pdest := io.loadIn(i).bits.uop.pdest
+    //   uop(loadWbIndex).cf := io.loadIn(i).bits.uop.cf
+    //   uop(loadWbIndex).ctrl := io.loadIn(i).bits.uop.ctrl
+    //   uop(loadWbIndex).debugInfo := io.loadIn(i).bits.uop.debugInfo
+
+    //   vaddrTriggerResultModule.io.waddr(i) := loadWbIndex
+    //   vaddrTriggerResultModule.io.wdata(i) := io.trigger(i).hitLoadAddrTriggerHitVec
+
+    //   vaddrTriggerResultModule.io.wen(i) := true.B
+    // }
+
+    // dirty code to reduce load_s2.valid fanout
+    when(io.loadIn(i).bits.lq_data_wen_dup(0)){
       val loadWbData = Wire(new LQDataEntry)
       loadWbData.paddr := io.loadIn(i).bits.paddr
       loadWbData.mask := io.loadIn(i).bits.mask
@@ -233,30 +283,30 @@ class LoadQueue(implicit p: Parameters) extends XSModule
       loadWbData.fwdMask := io.loadIn(i).bits.forwardMask
       dataModule.io.wbWrite(i, loadWbIndex, loadWbData)
       dataModule.io.wb.wen(i) := true.B
-
+    }
+    // dirty code for load instr
+    when(io.loadIn(i).bits.lq_data_wen_dup(1)){
+      uop(loadWbIndex).pdest := io.loadIn(i).bits.uop.pdest
+    }
+    when(io.loadIn(i).bits.lq_data_wen_dup(2)){
+      uop(loadWbIndex).cf := io.loadIn(i).bits.uop.cf
+    }
+    when(io.loadIn(i).bits.lq_data_wen_dup(3)){
+      uop(loadWbIndex).ctrl := io.loadIn(i).bits.uop.ctrl
+    }
+    when(io.loadIn(i).bits.lq_data_wen_dup(4)){
+      uop(loadWbIndex).debugInfo := io.loadIn(i).bits.uop.debugInfo
+    }
+    when(io.loadIn(i).bits.lq_data_wen_dup(5)){
       vaddrTriggerResultModule.io.waddr(i) := loadWbIndex
       vaddrTriggerResultModule.io.wdata(i) := io.trigger(i).hitLoadAddrTriggerHitVec
       vaddrTriggerResultModule.io.wen(i) := true.B
+    }
 
-      debug_mmio(loadWbIndex) := io.loadIn(i).bits.mmio
-      debug_paddr(loadWbIndex) := io.loadIn(i).bits.paddr
-
-      val dcacheMissed = io.loadIn(i).bits.miss && !io.loadIn(i).bits.mmio
-      if(EnableFastForward){
-        miss(loadWbIndex) := dcacheMissed && !io.loadDataForwarded(i) && !io.dcacheRequireReplay(i)
-      } else {
-        miss(loadWbIndex) := dcacheMissed && !io.loadDataForwarded(i)
-      }
-      pending(loadWbIndex) := io.loadIn(i).bits.mmio
-      released(loadWbIndex) := release2cycle.valid &&
-        io.loadIn(i).bits.paddr(PAddrBits-1, DCacheLineOffset) === release2cycle.bits.paddr(PAddrBits-1, DCacheLineOffset) ||
-        release1cycle.valid &&
-        io.loadIn(i).bits.paddr(PAddrBits-1, DCacheLineOffset) === release1cycle.bits.paddr(PAddrBits-1, DCacheLineOffset)
-      // dirty code for load instr
-      uop(loadWbIndex).pdest := io.loadIn(i).bits.uop.pdest
-      uop(loadWbIndex).cf := io.loadIn(i).bits.uop.cf
-      uop(loadWbIndex).ctrl := io.loadIn(i).bits.uop.ctrl
-      uop(loadWbIndex).debugInfo := io.loadIn(i).bits.uop.debugInfo
+    when(io.loadPaddrIn(i).valid) {
+      dataModule.io.paddr.wen(i) := true.B
+      dataModule.io.paddr.waddr(i) := io.loadPaddrIn(i).bits.lqIdx.value
+      dataModule.io.paddr.wdata(i) := io.loadPaddrIn(i).bits.paddr
     }
 
     // vaddrModule write is delayed, as vaddrModule will not be read right after write
@@ -275,17 +325,17 @@ class LoadQueue(implicit p: Parameters) extends XSModule
   dataModule.io.refill.paddr := io.dcache.bits.addr
   dataModule.io.refill.data := io.dcache.bits.data
 
-  val dcacheRequireReplay = WireInit(VecInit((0 until LoadPipelineWidth).map(i =>{
-    RegNext(io.loadIn(i).fire()) && RegNext(io.dcacheRequireReplay(i))
+  val s2_dcache_require_replay = WireInit(VecInit((0 until LoadPipelineWidth).map(i =>{
+    RegNext(io.loadIn(i).fire()) && RegNext(io.s2_dcache_require_replay(i))
   })))
-  dontTouch(dcacheRequireReplay)
+  dontTouch(s2_dcache_require_replay)
 
   (0 until LoadQueueSize).map(i => {
     dataModule.io.refill.refillMask(i) := allocated(i) && miss(i)
     when(dataModule.io.refill.valid && dataModule.io.refill.refillMask(i) && dataModule.io.refill.matchMask(i)) {
       datavalid(i) := true.B
       miss(i) := false.B
-      when(!dcacheRequireReplay.asUInt.orR){
+      when(!s2_dcache_require_replay.asUInt.orR){
         refilling(i) := true.B
       }
       when(io.dcache.bits.error) {
@@ -299,10 +349,10 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     val lastCycleLoadWbIndex = RegNext(loadWbIndex)
     // update miss state in load s3
     if(!EnableFastForward){
-      // dcacheRequireReplay will be used to update lq flag 1 cycle after for better timing
+      // s2_dcache_require_replay will be used to update lq flag 1 cycle after for better timing
       //
-      // io.dcacheRequireReplay comes from dcache miss req reject, which is quite slow to generate
-      when(dcacheRequireReplay(i)) {
+      // io.s2_dcache_require_replay comes from dcache miss req reject, which is quite slow to generate
+      when(s2_dcache_require_replay(i)) {
         // do not writeback if that inst will be resend from rs
         // rob writeback will not be triggered by a refill before inst replay
         miss(lastCycleLoadWbIndex) := false.B // disable refill listening
@@ -311,8 +361,12 @@ class LoadQueue(implicit p: Parameters) extends XSModule
       }
     }
     // update load error state in load s3
-    when(RegNext(io.loadIn(i).fire()) && io.delayedLoadError(i)){
+    when(RegNext(io.loadIn(i).fire()) && io.s3_delayed_load_error(i)){
       uop(lastCycleLoadWbIndex).cf.exceptionVec(loadAccessFault) := true.B
+    }
+    // update inst replay from fetch flag in s3
+    when(RegNext(io.loadIn(i).fire()) && io.s3_replay_from_fetch(i)){
+      uop(lastCycleLoadWbIndex).ctrl.replayInst := true.B
     }
   }
 
@@ -514,7 +568,7 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     val lqViolationVec = VecInit((0 until LoadQueueSize).map(j => {
       addrMaskMatch(j) && entryNeedCheck(j)
     }))
-    val lqViolation = lqViolationVec.asUInt().orR()
+    val lqViolation = lqViolationVec.asUInt().orR() && RegNext(!io.storeIn(i).bits.miss)
     val lqViolationIndex = getFirstOne(lqViolationVec, RegNext(lqIdxMask))
     val lqViolationUop = uop(lqViolationIndex)
     // lqViolationUop.lqIdx.flag := deqMask(lqViolationIndex) ^ deqPtrExt.flag
@@ -716,7 +770,8 @@ class LoadQueue(implicit p: Parameters) extends XSModule
     // If a load comes in that cycle, we can not judge if it has ld-ld violation
     // We replay that load inst from RS
     io.loadViolationQuery.map(i => i.req.ready :=
-      !i.req.bits.paddr(PAddrBits-1, DCacheLineOffset) === release2cycle.bits.paddr(PAddrBits-1, DCacheLineOffset)
+      // use lsu side release2cycle_dup_lsu paddr for better timing
+      !i.req.bits.paddr(PAddrBits-1, DCacheLineOffset) === release2cycle_dup_lsu.bits.paddr(PAddrBits-1, DCacheLineOffset)
     )
     // io.loadViolationQuery.map(i => i.req.ready := false.B) // For better timing
   }

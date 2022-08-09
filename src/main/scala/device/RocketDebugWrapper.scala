@@ -54,7 +54,7 @@ class DebugModule(numCores: Int)(implicit p: Parameters) extends LazyModule {
       val resetCtrl = new ResetCtrlIO(numCores)(p)
       val debugIO = new DebugIO()(p)
       val clock = Input(Bool())
-      val reset = Input(Bool())
+      val reset = Input(Reset())
     })
     debug.module.io.tl_reset := io.reset // this should be TL reset
     debug.module.io.tl_clock := io.clock.asClock // this should be TL clock
@@ -101,7 +101,8 @@ object XSDebugModuleParams {
       maxSupportedSBAccess = xlen,
       hasBusMaster = true,
       baseAddress = BigInt(0x38020000),
-      nScratch = 2
+      nScratch = 2,
+      crossingHasSafeReset = false
     )
   }
 }
@@ -112,13 +113,13 @@ class SimJTAG(tickDelay: Int = 50)(implicit val p: Parameters) extends ExtModule
   with HasExtModuleResource {
 
   val clock = IO(Input(Clock()))
-  val reset = IO(Input(Bool()))
+  val reset = IO(Input(Reset()))
   val jtag = IO(new JTAGIO(hasTRSTn = true))
   val enable = IO(Input(Bool()))
   val init_done = IO(Input(Bool()))
   val exit = IO(Output(UInt(32.W)))
 
-  def connect(dutio: JTAGIO, tbclock: Clock, tbreset: Bool, done: Bool, tbsuccess: Bool) = {
+  def connect(dutio: JTAGIO, tbclock: Clock, tbreset: Reset, done: Bool, tbsuccess: Bool) = {
     dutio.TCK := jtag.TCK
     dutio.TMS := jtag.TMS
     dutio.TDI := jtag.TDI

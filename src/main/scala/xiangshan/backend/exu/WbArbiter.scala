@@ -306,7 +306,7 @@ class WbArbiterWrapper(
         val difftest = Module(new DifftestIntWriteback)
         difftest.io.clock := clock
         difftest.io.coreid := io.hartId
-        difftest.io.valid := out.valid
+        difftest.io.valid := out.valid && out.bits.uop.ctrl.rfWen
         difftest.io.dest := out.bits.uop.pdest
         difftest.io.data := out.bits.data
       })
@@ -327,7 +327,7 @@ class WbArbiterWrapper(
         val difftest = Module(new DifftestFpWriteback)
         difftest.io.clock := clock
         difftest.io.coreid := io.hartId
-        difftest.io.valid := out.valid
+        difftest.io.valid := out.valid // all fp instr will write fp rf
         difftest.io.dest := out.bits.uop.pdest
         difftest.io.data := out.bits.data
       })
@@ -357,7 +357,7 @@ class Wb2Ctrl(configs: Seq[ExuConfig])(implicit p: Parameters) extends LazyModul
       val redirect = Flipped(ValidIO(new Redirect))
       val in = Vec(configs.length, Input(Decoupled(new ExuOutput)))
       val out = Vec(configs.length, ValidIO(new ExuOutput))
-      val delayedLoadError = Vec(LoadPipelineWidth, Input(Bool())) // Dirty fix of data ecc error timing
+      val s3_delayed_load_error = Vec(LoadPipelineWidth, Input(Bool())) // Dirty fix of data ecc error timing
     })
     val redirect = RegNextWithEnable(io.redirect)
 
@@ -373,7 +373,7 @@ class Wb2Ctrl(configs: Seq[ExuConfig])(implicit p: Parameters) extends LazyModul
     if(EnableAccurateLoadError){
       for ((((out, in), config), delayed_error) <- io.out.zip(io.in).zip(configs)
         .filter(_._2.hasLoadError)
-        .zip(io.delayedLoadError)
+        .zip(io.s3_delayed_load_error)
       ){
         // overwrite load exception writeback
         out.bits.uop.cf.exceptionVec(loadAccessFault) := delayed_error ||

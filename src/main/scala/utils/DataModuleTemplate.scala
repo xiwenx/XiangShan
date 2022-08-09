@@ -90,27 +90,33 @@ class SyncDataModuleTemplate[T <: Data](
 
   val dataBanks = Seq.tabulate(numBanks)(i => {
     val bankEntries = if (i < numBanks - 1) maxBankEntries else numEntries - (i * maxBankEntries)
-    Module(new NegedgeDataModuleTemplate(dataType, bankEntries, numRead, numWrite, parentModule, perReadPortBypassEnable))
+    val dataBank = Module(new NegedgeDataModuleTemplate(dataType, bankEntries, numRead, numWrite, parentModule, perReadPortBypassEnable))
+
+    // delay one clock
+    val raddr_dup = RegNext(io.raddr)
+    val wen_dup = RegNext(io.wen)
+    val waddr_dup = io.wen.zip(io.waddr).map(w => RegEnable(w._2, w._1))
+
+    // input
+    dataBank.io.raddr := raddr_dup.map(bankOffset)
+    dataBank.io.wen := wen_dup.zip(waddr_dup).map{ case (en, addr) => en && bankIndex(addr) === i.U }
+    dataBank.io.waddr := waddr_dup.map(bankOffset)
+    if (concatData) {
+      val wdata_dup = io.wen.zip(io.wdata).map(w => RegEnable(w._2.asTypeOf(dataType), w._1))
+      dataBank.io.wdata := wdata_dup
+    }
+    else {
+      dataBank.io.wdata := io.wen.zip(io.wdata).map(w => RegEnable(w._2, w._1))
+    }
+
+    dataBank
   })
-
-  // delay one clock
-  val raddr = RegNext(io.raddr)
-  val wen = RegNext(io.wen)
-  val waddr = io.wen.zip(io.waddr).map(w => RegEnable(w._2, w._1))
-  val wdata = if (concatData) RegNext(VecInit(io.wdata.map(w => w.asTypeOf(dataType)))) else RegNext(io.wdata)
-
-  // input
-  for ((dataBank, i) <- dataBanks.zipWithIndex) {
-    dataBank.io.raddr := raddr.map(bankOffset)
-    dataBank.io.wen := wen.zip(waddr).map{ case (en, addr) => en && bankIndex(addr) === i.U }
-    dataBank.io.waddr := waddr.map(bankOffset)
-    dataBank.io.wdata := wdata
-  }
 
   // output
   val rdata = if (concatData) dataBanks.map(_.io.rdata.map(_.asTypeOf(gen))) else dataBanks.map(_.io.rdata)
   for (j <- 0 until numRead) {
-    val index_dec = UIntToOH(bankIndex(raddr(j)), numBanks)
+    val raddr_dup = RegNext(io.raddr(j))
+    val index_dec = UIntToOH(bankIndex(raddr_dup), numBanks)
     io.rdata(j) := Mux1H(index_dec, rdata.map(_(j)))
   }
 }

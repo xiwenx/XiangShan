@@ -55,27 +55,36 @@ class BankedAsyncDataModuleTemplateWithDup[T <: Data](
     Mem(bankEntries, gen)
   })
 
+  // delay one cycle for write, so there will be one inflight entry.
+  // The inflight entry is transparent('already writen') for outside
+  val last_wen = RegNext(io.wen, false.B)
+  val last_wdata = RegEnable(io.wdata, io.wen)
+  val last_wdata2 = RegEnable(last_wdata, last_wen)
+  val last_waddr = RegEnable(io.waddr, io.wen)
+
   // async read, but regnext
   for (i <- 0 until numRead) {
     val data_read = Reg(Vec(numDup, Vec(numBanks, gen)))
     val bank_index = Reg(Vec(numDup, UInt(numBanks.W)))
+    val w_bypassed = RegNext(io.waddr === io.raddr(i) && io.wen)
+    val w_bypassed2 = RegNext(last_waddr === io.raddr(i) && last_wen)
     for (j <- 0 until numDup) {
       bank_index(j) := UIntToOH(bankIndex(io.raddr(i)))
       for (k <- 0 until numBanks) {
-        data_read(j)(k) := Mux(io.wen && (io.waddr === io.raddr(i)),
-          io.wdata, dataBanks(k)(bankOffset(io.raddr(i))))
+        data_read(j)(k) := dataBanks(k)(bankOffset(io.raddr(i)))
       }
     }
-    // next cycle48G
+    // next cycle
     for (j <- 0 until numDup) {
-      io.rdata(i)(j) := Mux1H(bank_index(j), data_read(j))
+      io.rdata(i)(j) := Mux(w_bypassed || w_bypassed2, Mux(w_bypassed2, last_wdata2, last_wdata),
+        Mux1H(bank_index(j), data_read(j)))
     }
   }
 
   // write
   for (i <- 0 until numBanks) {
-    when (io.wen && (bankIndex(io.waddr) === i.U)) {
-      dataBanks(i)(bankOffset(io.waddr)) := io.wdata
+    when (last_wen && (bankIndex(last_waddr) === i.U)) {
+      dataBanks(i)(bankOffset(last_waddr)) := last_wdata
     }
   }
 }
@@ -244,7 +253,7 @@ class TLBSA(
     val v_resize = v.asTypeOf(Vec(VPRE_SELECT, Vec(VPOST_SELECT, UInt(nWays.W))))
     val vidx_resize = RegNext(v_resize(get_set_idx(drop_set_idx(vpn, VPOST_SELECT), VPRE_SELECT)))
     val vidx = vidx_resize(get_set_idx(vpn_reg, VPOST_SELECT)).asBools.map(_ && RegNext(req.fire()))
-    val vidx_bypass = RegNext((entries.io.waddr(0) === ridx) && entries.io.wen(0))
+    val vidx_bypass = RegNext((entries.io.waddr === ridx) && entries.io.wen)
     entries.io.raddr(i) := ridx
 
     val data = entries.io.rdata(i)

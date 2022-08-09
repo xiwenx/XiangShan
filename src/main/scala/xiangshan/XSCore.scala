@@ -24,6 +24,7 @@ import freechips.rocketchip.diplomacy.{BundleBridgeSource, LazyModule, LazyModul
 import freechips.rocketchip.interrupts.{IntSinkNode, IntSinkPortSimple}
 import freechips.rocketchip.tile.HasFPUParameters
 import freechips.rocketchip.tilelink.TLBuffer
+import huancun.utils.{ModuleNode, ResetGen, ResetGenNode}
 import system.HasSoCParameter
 import utils._
 import xiangshan.backend._
@@ -138,7 +139,7 @@ abstract class XSCoreBase()(implicit p: config.Parameters) extends LazyModule
   val plic_int_sink = IntSinkNode(IntSinkPortSimple(2, 1))
   // outer facing nodes
   val frontend = LazyModule(new Frontend())
-  val ptw = LazyModule(new PTWWrapper())
+  val ptw = LazyModule(new L2TLBWrapper())
   val ptw_to_l2_buffer = LazyModule(new TLBuffer)
   val csrOut = BundleBridgeSource(Some(() => new DistributedCSRIO()))
 
@@ -274,7 +275,7 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
   val rfWriteback = outer.wbArbiter.module.io.out
 
   // memblock error exception writeback, 1 cycle after normal writeback
-  wb2Ctrl.io.delayedLoadError <> memBlock.io.delayedLoadError
+  wb2Ctrl.io.s3_delayed_load_error <> memBlock.io.s3_delayed_load_error
 
   wb2Ctrl.io.redirect <> ctrlBlock.io.redirect
   outer.wb2Ctrl.generateWritebackIO()
@@ -439,6 +440,6 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
     )
   )
 
-  ResetGen(resetTree, reset.asBool, !debugOpts.FPGAPlatform)
+  ResetGen(resetTree, reset, !debugOpts.FPGAPlatform)
 
 }

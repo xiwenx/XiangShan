@@ -465,9 +465,9 @@ class BridgeTLBIO(Width: Int)(implicit p: Parameters) extends MMUIOBaseBundle {
 }
 
 
-/****************************  PTW  *************************************/
+/****************************  L2TLB  *************************************/
 abstract class PtwBundle(implicit p: Parameters) extends XSBundle with HasPtwConst
-abstract class PtwModule(outer: PTW) extends LazyModuleImp(outer)
+abstract class PtwModule(outer: L2TLB) extends LazyModuleImp(outer)
   with HasXSParameter with HasPtwConst
 
 class PteBundle(implicit p: Parameters) extends PtwBundle{
@@ -581,6 +581,7 @@ class PtwEntry(tagLen: Int, hasPerm: Boolean = false, hasLevel: Boolean = false)
 
 class PtwEntries(num: Int, tagLen: Int, level: Int, hasPerm: Boolean)(implicit p: Parameters) extends PtwBundle {
   require(log2Up(num)==log2Down(num))
+  // NOTE: hasPerm means that is leaf or not.
 
   val tag  = UInt(tagLen.W)
   val asid = UInt(asidLen.W)
@@ -589,6 +590,13 @@ class PtwEntries(num: Int, tagLen: Int, level: Int, hasPerm: Boolean)(implicit p
   val perms = if (hasPerm) Some(Vec(num, new PtePermBundle)) else None
   val prefetch = Bool()
   // println(s"PtwEntries: tag:1*${tagLen} ppns:${num}*${ppnLen} vs:${num}*1")
+  // NOTE: vs is used for different usage:
+  // for l3, which store the leaf(leaves), vs is page fault or not.
+  // for l2, which shoule not store leaf, vs is valid or not, that will anticipate in hit check
+  // Because, l2 should not store leaf(no perm), it doesn't store perm.
+  // If l2 hit a leaf, the perm is still unavailble. Should still page walk. Complex but nothing helpful.
+  // TODO: divide vs into validVec and pfVec
+  // for l2: may valid but pf, so no need for page walk, return random pte with pf.
 
   def tagClip(vpn: UInt) = {
     require(vpn.getWidth == vpnLen)
@@ -601,7 +609,7 @@ class PtwEntries(num: Int, tagLen: Int, level: Int, hasPerm: Boolean)(implicit p
 
   def hit(vpn: UInt, asid: UInt, ignoreAsid: Boolean = false) = {
     val asid_hit = if (ignoreAsid) true.B else (this.asid === asid)
-    asid_hit && tag === tagClip(vpn) && vs(sectorIdxClip(vpn, level)) // TODO: optimize this. don't need to compare each with tag
+    asid_hit && tag === tagClip(vpn) && (if (hasPerm) true.B else vs(sectorIdxClip(vpn, level)))
   }
 
   def genEntries(vpn: UInt, asid: UInt, data: UInt, levelUInt: UInt, prefetch: Bool) = {
@@ -714,7 +722,7 @@ class PtwResp(implicit p: Parameters) extends PtwBundle {
   }
 }
 
-class PtwIO(implicit p: Parameters) extends PtwBundle {
+class L2TLBIO(implicit p: Parameters) extends PtwBundle {
   val tlb = Vec(PtwWidth, Flipped(new TlbPtwIO))
   val sfence = Input(new SfenceBundle)
   val csr = new Bundle {
@@ -730,4 +738,14 @@ class L2TlbMemReqBundle(implicit p: Parameters) extends PtwBundle {
 
 class L2TlbInnerBundle(implicit p: Parameters) extends PtwReq {
   val source = UInt(bSourceWidth.W)
+}
+
+object ValidHoldBypass{
+  def apply(infire: Bool, outfire: Bool, flush: Bool = false.B) = {
+    val valid = RegInit(false.B)
+    when (infire) { valid := true.B }
+    when (outfire) { valid := false.B } // ATTENTION: order different with ValidHold
+    when (flush) { valid := false.B } // NOTE: the flush will flush in & out, is that ok?
+    valid || infire
+  }
 }
