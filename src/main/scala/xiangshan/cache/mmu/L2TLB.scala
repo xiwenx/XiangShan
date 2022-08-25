@@ -91,6 +91,7 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
   val cache = Module(new PtwCache)
   val ptw = Module(new PtwFsm)
   val llptw = Module(new LLPTW)
+  val blockmq = Module(new BlockHelper(3))
   val arb1 = Module(new Arbiter(new PtwReq, PtwWidth))
   val arb2 = Module(new Arbiter(new Bundle {
     val vpn = UInt(vpnLen.W)
@@ -108,7 +109,7 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
   val InArbMissQueuePort = 0
   val InArbTlbPort = 1
   val InArbPrefetchPort = 2
-  block_decoupled(missQueue.io.out, arb2.io.in(InArbMissQueuePort), !ptw.io.req.ready)
+  block_decoupled(missQueue.io.out, arb2.io.in(InArbMissQueuePort), !ptw.io.req.ready || blockmq.io.block)
   arb2.io.in(InArbTlbPort).valid := arb1.io.out.valid
   arb2.io.in(InArbTlbPort).bits.vpn := arb1.io.out.bits.vpn
   arb2.io.in(InArbTlbPort).bits.source := arb1.io.chosen
@@ -126,8 +127,8 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
   }
   arb2.io.out.ready := cache.io.req.ready
 
-  val LLPTWARB_CACHE=0
-  val LLPTWARB_PTW=1
+  val LLPTWARB_CACHE=1
+  val LLPTWARB_PTW=0
   val llptw_arb = Module(new Arbiter(new LLPTWInBundle, 2))
   llptw_arb.io.in(LLPTWARB_CACHE).valid := cache.io.resp.valid && !cache.io.resp.bits.hit && cache.io.resp.bits.toFsm.l2Hit && !cache.io.resp.bits.bypassed
   llptw_arb.io.in(LLPTWARB_CACHE).bits.req_info := cache.io.resp.bits.req_info
@@ -136,6 +137,20 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
   llptw.io.in <> llptw_arb.io.out
   llptw.io.sfence := sfence_dup(1)
   llptw.io.csr := csr_dup(1)
+
+  val mq_arb = Module(new Arbiter(new L2TlbInnerBundle, 2))
+  mq_arb.io.in(0).valid := cache.io.resp.valid && !cache.io.resp.bits.hit &&
+    (!cache.io.resp.bits.toFsm.l2Hit || cache.io.resp.bits.bypassed) &&
+    !from_pre(cache.io.resp.bits.req_info.source) &&
+    (cache.io.resp.bits.bypassed || !ptw.io.req.ready)
+  mq_arb.io.in(0).bits :=  cache.io.resp.bits.req_info
+  mq_arb.io.in(1) <> llptw.io.cache
+  missQueue.io.in <> mq_arb.io.out
+  missQueue.io.sfence  := sfence_dup(6)
+  missQueue.io.csr := csr_dup(5)
+
+  blockmq.io.start := missQueue.io.out.fire
+  blockmq.io.enable := ptw.io.req.fire()
 
   cache.io.req.valid := arb2.io.out.valid
   cache.io.req.bits.req_info.vpn := arb2.io.out.bits.vpn
@@ -149,15 +164,7 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
   cache.io.resp.ready := Mux(cache.io.resp.bits.hit,
     outReady(cache.io.resp.bits.req_info.source, outArbCachePort),
     Mux(cache.io.resp.bits.toFsm.l2Hit && !cache.io.resp.bits.bypassed, llptw_arb.io.in(LLPTWARB_CACHE).ready,
-    Mux(cache.io.resp.bits.bypassed, missQueue.io.in.ready, missQueue.io.in.ready || ptw.io.req.ready)))
-
-  missQueue.io.in.valid := cache.io.resp.valid && !cache.io.resp.bits.hit &&
-    (!cache.io.resp.bits.toFsm.l2Hit || cache.io.resp.bits.bypassed) &&
-    !from_pre(cache.io.resp.bits.req_info.source) &&
-    (cache.io.resp.bits.bypassed || !ptw.io.req.ready)
-  missQueue.io.in.bits := cache.io.resp.bits.req_info
-  missQueue.io.sfence  := sfence_dup(6)
-  missQueue.io.csr := csr_dup(5)
+    Mux(cache.io.resp.bits.bypassed, mq_arb.io.in(0).ready, mq_arb.io.in(0).ready || ptw.io.req.ready)))
 
   // NOTE: missQueue req has higher priority
   ptw.io.req.valid := cache.io.resp.valid && !cache.io.resp.bits.hit && !cache.io.resp.bits.toFsm.l2Hit && !cache.io.resp.bits.bypassed
@@ -241,11 +248,16 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
     assert(mem.d.bits.source <= l2tlbParams.llptwsize.U)
     refill_data(refill_helper._4) := mem.d.bits.data
   }
+  // refill_data_tmp is the wire fork of refill_data, but one cycle earlier
+  val refill_data_tmp = WireInit(refill_data)
+  refill_data_tmp(refill_helper._4) := mem.d.bits.data
+
   // save only one pte for each id
   // (miss queue may can't resp to tlb with low latency, it should have highest priority, but diffcult to design cache)
   val resp_pte = VecInit((0 until MemReqWidth).map(i =>
-    if (i == l2tlbParams.llptwsize) {DataHoldBypass(get_part(refill_data, req_addr_low(i)), RegNext(mem_resp_done && !mem_resp_from_mq)) }
+    if (i == l2tlbParams.llptwsize) {RegEnable(get_part(refill_data_tmp, req_addr_low(i)), mem_resp_done && !mem_resp_from_mq) }
     else { DataHoldBypass(get_part(refill_data, req_addr_low(i)), llptw_mem.buffer_it(i)) }
+    // llptw could not use refill_data_tmp, because enq bypass's result works at next cycle
   ))
 
   // mem -> miss queue
@@ -259,9 +271,6 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
   val refill_from_mq = mem_resp_from_mq
   val refill_level = Mux(refill_from_mq, 2.U, RegEnable(ptw.io.refill.level, init = 0.U, ptw.io.mem.req.fire()))
   val refill_valid = mem_resp_done && !flush && !flush_latch(mem.d.bits.source)
-  // Assume mem.resp.data will arrive (255, 0) first and then (511, 256).
-  val refill_data_tmp = WireInit(refill_data)
-  refill_data_tmp(refill_helper._4) := mem.d.bits.data
 
   cache.io.refill.valid := RegNext(refill_valid, false.B)
   cache.io.refill.bits.ptes := refill_data.asUInt
@@ -369,6 +378,35 @@ class PTWImp(outer: PTW)(implicit p: Parameters) extends PtwModule(outer) with H
 
   val perfEvents  = Seq(llptw, cache, ptw).flatMap(_.getPerfEvents)
   generatePerfEvent()
+}
+
+/** BlockHelper, block missqueue, not to send too many req to cache
+ *  Parameter:
+ *    enable: enable BlockHelper, mq should not send too many reqs
+ *    start: when miss queue out fire and need, block miss queue's out
+ *    block: block miss queue's out
+ *    latency: last missqueue out's cache access latency
+ */
+class BlockHelper(latency: Int)(implicit p: Parameters) extends XSModule {
+  val io = IO(new Bundle {
+    val enable = Input(Bool())
+    val start = Input(Bool())
+    val block = Output(Bool())
+  })
+
+  val count = RegInit(0.U(log2Ceil(latency).W))
+  val valid = RegInit(false.B)
+  val work = RegInit(true.B)
+
+  io.block := valid
+
+  when (io.start && work) { valid := true.B }
+  when (valid) { count := count + 1.U }
+  when (count === (latency.U) || io.enable) {
+    valid := false.B
+    work := io.enable
+    count := 0.U
+  }
 }
 
 class PTEHelper() extends ExtModule {

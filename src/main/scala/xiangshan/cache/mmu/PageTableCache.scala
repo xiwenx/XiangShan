@@ -130,11 +130,17 @@ class PtwCache()(implicit p: Parameters) extends XSModule with HasPtwConst with 
   val stageDelay = Wire(Vec(2, Decoupled(new PtwCacheReq()))) // page cache resp
   val stageCheck = Wire(Vec(2, Decoupled(new PtwCacheReq()))) // check hit & check ecc
   val stageResp = Wire(Decoupled(new PtwCacheReq()))         // deq stage
+
+  val stageDelay_valid_1cycle = OneCycleValid(stageReq.fire, flush)      // catch ram data
+  val stageCheck_valid_1cycle = OneCycleValid(stageDelay(1).fire, flush) // replace & perf counter
+  val stageResp_valid_1cycle_dup = Wire(Vec(2, Bool()))
+  stageResp_valid_1cycle_dup.map(_ := OneCycleValid(stageCheck(1).fire, flush))  // ecc flush
+
   stageReq <> io.req
   PipelineConnect(stageReq, stageDelay(0), stageDelay(1).ready, flush, rwHarzad)
-  InsideStageConnect(stageDelay(0), stageDelay(1), stageReq.fire)
+  InsideStageConnect(stageDelay(0), stageDelay(1), stageDelay_valid_1cycle)
   PipelineConnect(stageDelay(1), stageCheck(0), stageCheck(1).ready, flush)
-  InsideStageConnect(stageCheck(0), stageCheck(1), stageDelay(1).fire)
+  InsideStageConnect(stageCheck(0), stageCheck(1), stageCheck_valid_1cycle)
   PipelineConnect(stageCheck(1), stageResp, io.resp.ready, flush)
   stageResp.ready := !stageResp.valid || io.resp.ready
 
@@ -208,10 +214,6 @@ class PtwCache()(implicit p: Parameters) extends XSModule with HasPtwConst with 
   l3AccessPerf.map(_ := false.B)
   spAccessPerf.map(_ := false.B)
 
-  val stageDelay_valid_1cycle = OneCycleValid(stageReq.fire, flush)      // catch ram data
-  val stageCheck_valid_1cycle = OneCycleValid(stageDelay(1).fire, flush) // replace & perf counter
-  val stageResp_valid_1cycle_dup = Wire(Vec(2, Bool()))
-  stageResp_valid_1cycle_dup.map(_ := OneCycleValid(stageCheck(1).fire, flush))  // ecc flush
 
 
   def vpn_match(vpn1: UInt, vpn2: UInt, level: Int) = {
@@ -257,18 +259,21 @@ class PtwCache()(implicit p: Parameters) extends XSModule with HasPtwConst with 
     val ridx = genPtwL2SetIdx(stageReq.bits.req_info.vpn)
     l2.io.r.req.valid := stageReq.fire
     l2.io.r.req.bits.apply(setIdx = ridx)
+    val vVec_req = getl2vSet(stageReq.bits.req_info.vpn)
 
     // delay one cycle after sram read
+    val delay_vpn = stageDelay(0).bits.req_info.vpn
     val data_resp = DataHoldBypass(l2.io.r.resp.data, stageDelay_valid_1cycle)
-    val vVec_delay = DataHoldBypass(getl2vSet(stageDelay(0).bits.req_info.vpn), stageDelay_valid_1cycle)
+    val vVec_delay = RegEnable(vVec_req, stageReq.fire)
+    val hitVec_delay = VecInit(data_resp.zip(vVec_delay.asBools).map { case (wayData, v) =>
+      wayData.entries.hit(delay_vpn, io.csr_dup(1).satp.asid) && v })
 
     // check hit and ecc
     val check_vpn = stageCheck(0).bits.req_info.vpn
     val ramDatas = RegEnable(data_resp, stageDelay(1).fire)
     val vVec = RegEnable(vVec_delay, stageDelay(1).fire).asBools()
 
-    val hitVec = VecInit(ramDatas.zip(vVec).map { case (wayData, v) =>
-      wayData.entries.hit(check_vpn, io.csr_dup(1).satp.asid) && v })
+    val hitVec = RegEnable(hitVec_delay, stageDelay(1).fire)
     val hitWayEntry = ParallelPriorityMux(hitVec zip ramDatas)
     val hitWayData = hitWayEntry.entries
     val hit = ParallelOR(hitVec)
@@ -299,19 +304,21 @@ class PtwCache()(implicit p: Parameters) extends XSModule with HasPtwConst with 
     val ridx = genPtwL3SetIdx(stageReq.bits.req_info.vpn)
     l3.io.r.req.valid := stageReq.fire
     l3.io.r.req.bits.apply(setIdx = ridx)
+    val vVec_req = getl3vSet(stageReq.bits.req_info.vpn)
 
     // delay one cycle after sram read
+    val delay_vpn = stageDelay(0).bits.req_info.vpn
     val data_resp = DataHoldBypass(l3.io.r.resp.data, stageDelay_valid_1cycle)
-    val vVec_delay = DataHoldBypass(getl3vSet(stageDelay(0).bits.req_info.vpn), stageDelay_valid_1cycle)
-    val bypass_delay = DataHoldBypass(refill_bypass(stageDelay(0).bits.req_info.vpn, 2), stageDelay_valid_1cycle || io.refill.valid)
+    val vVec_delay = RegEnable(vVec_req, stageReq.fire)
+    val hitVec_delay = VecInit(data_resp.zip(vVec_delay.asBools).map { case (wayData, v) =>
+      wayData.entries.hit(delay_vpn, io.csr_dup(2).satp.asid) && v })
 
     // check hit and ecc
     val check_vpn = stageCheck(0).bits.req_info.vpn
     val ramDatas = RegEnable(data_resp, stageDelay(1).fire)
     val vVec = RegEnable(vVec_delay, stageDelay(1).fire).asBools()
 
-    val hitVec = VecInit(ramDatas.zip(vVec).map{ case (wayData, v) =>
-      wayData.entries.hit(check_vpn, io.csr_dup(2).satp.asid) && v })
+    val hitVec = RegEnable(hitVec_delay, stageDelay(1).fire)
     val hitWayEntry = ParallelPriorityMux(hitVec zip ramDatas)
     val hitWayData = hitWayEntry.entries
     val hitWayEcc = hitWayEntry.ecc
@@ -641,12 +648,17 @@ class PtwCache()(implicit p: Parameters) extends XSModule with HasPtwConst with 
     }
   }
 
-  def InsideStageConnect(in: DecoupledIO[PtwCacheReq], out: DecoupledIO[PtwCacheReq], InFire: Bool): Unit = {
+  def InsideStageConnect(in: DecoupledIO[PtwCacheReq], out: DecoupledIO[PtwCacheReq], inFire: Bool): Unit = {
     in.ready := !in.valid || out.ready
     out.valid := in.valid
     out.bits := in.bits
     out.bits.bypassed.zip(in.bits.bypassed).zipWithIndex.map{ case (b, i) =>
-      b._1 := b._2 || DataHoldBypass(refill_bypass(in.bits.req_info.vpn, i), OneCycleValid(InFire, false.B) || io.refill.valid)
+      val bypassed_reg = Reg(Bool())
+      val bypassed_wire = refill_bypass(in.bits.req_info.vpn, i) && io.refill.valid
+      when (inFire) { bypassed_reg := bypassed_wire }
+      .elsewhen (io.refill.valid) { bypassed_reg := bypassed_reg || bypassed_wire }
+
+      b._1 := b._2 || (bypassed_wire || (bypassed_reg && !inFire))
     }
   }
 
