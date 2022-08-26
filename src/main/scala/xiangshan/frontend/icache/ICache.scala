@@ -376,55 +376,55 @@ class ICacheDataArray(implicit p: Parameters) extends ICacheArray
   val bank_0_idx = bank_0_idx_vec.last
   val bank_1_idx = bank_1_idx_vec.last
 
-  val codeArrays = (0 until 2) map { i => 
-    val codeArray = Module(new SRAMTemplate(
-      UInt(dataCodeEntryBits.W),
-      set=nSets/2,
-      way=nWays,
-      shouldReset = true,
-      holdRead = true,
-      singlePort = true
-    ))
+  // val codeArrays = (0 until 2) map { i => 
+  //   val codeArray = Module(new SRAMTemplate(
+  //     UInt(dataCodeEntryBits.W),
+  //     set=nSets/2,
+  //     way=nWays,
+  //     shouldReset = true,
+  //     holdRead = true,
+  //     singlePort = true
+  //   ))
     
-    codeArray
-  }
+  //   codeArray
+  // }
 
-  val code_sram_write = Wire(Vec(2,codeArrays.head.io.w.req.cloneType))
-  code_sram_write.map(_.ready := true.B)
+  // val code_sram_write = Wire(Vec(2,codeArrays.head.io.w.req.cloneType))
+  // code_sram_write.map(_.ready := true.B)
 
-  (0 until 2).map{i =>
-    if(i == 0) {
-      codeArrays(i).io.r.req.valid := io.read.valid && io.read.bits.last.read_bank_0
-      codeArrays(i).io.r.req.bits.apply(setIdx=bank_0_idx(highestIdxBit,1))
-      // codeArray.io.w.req.valid := write_bank_0
-      // codeArray.io.w.req.bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
-      code_sram_write(i).valid := write_bank_0
-      code_sram_write(i).bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
-      codeArrays(i).io.w.req.valid := RegNext(code_sram_write(i).valid)
-      codeArrays(i).io.w.req.bits := RegNext(code_sram_write(i).bits)
+  // (0 until 2).map{i =>
+  //   if(i == 0) {
+  //     codeArrays(i).io.r.req.valid := io.read.valid && io.read.bits.last.read_bank_0
+  //     codeArrays(i).io.r.req.bits.apply(setIdx=bank_0_idx(highestIdxBit,1))
+  //     // codeArray.io.w.req.valid := write_bank_0
+  //     // codeArray.io.w.req.bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
+  //     code_sram_write(i).valid := write_bank_0
+  //     code_sram_write(i).bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
+  //     codeArrays(i).io.w.req.valid := RegNext(code_sram_write(i).valid)
+  //     codeArrays(i).io.w.req.bits := RegNext(code_sram_write(i).bits)
 
-    }
-    else {
-      codeArrays(i).io.r.req.valid := io.read.valid && io.read.bits.last.read_bank_1
-      codeArrays(i).io.r.req.bits.apply(setIdx=bank_1_idx(highestIdxBit,1))
-      // codeArray.io.w.req.valid := write_bank_1
-      // codeArray.io.w.req.bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
-      code_sram_write(i).valid := write_bank_1
-      code_sram_write(i).bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
-      codeArrays(i).io.w.req.valid := RegNext(code_sram_write(i).valid)
-      codeArrays(i).io.w.req.bits := RegNext(code_sram_write(i).bits)
-    }
-  }
+  //   }
+  //   else {
+  //     codeArrays(i).io.r.req.valid := io.read.valid && io.read.bits.last.read_bank_1
+  //     codeArrays(i).io.r.req.bits.apply(setIdx=bank_1_idx(highestIdxBit,1))
+  //     // codeArray.io.w.req.valid := write_bank_1
+  //     // codeArray.io.w.req.bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
+  //     code_sram_write(i).valid := write_bank_1
+  //     code_sram_write(i).bits.apply(data=write_data_code, setIdx=io.write.bits.virIdx(highestIdxBit,1), waymask=io.write.bits.waymask)
+  //     codeArrays(i).io.w.req.valid := RegNext(code_sram_write(i).valid)
+  //     codeArrays(i).io.w.req.bits := RegNext(code_sram_write(i).bits)
+  //   }
+  // }
   
   io.read.ready := !io.write.valid &&
-                    dataArrays.map(_.io.read.req.map(_.ready).reduce(_&&_)).reduce(_&&_) &&
-                    codeArrays.map(_.io.r.req.ready).reduce(_ && _)
+                    dataArrays.map(_.io.read.req.map(_.ready).reduce(_&&_)).reduce(_&&_) //&&
+                    //codeArrays.map(_.io.r.req.ready).reduce(_ && _)
 
-  //Parity Decode
-  val read_codes = Wire(Vec(2,Vec(nWays,UInt(dataCodeEntryBits.W) )))
-  for(((dataArray,codeArray),i) <- dataArrays.zip(codeArrays).zipWithIndex){
-    read_codes(i) := codeArray.io.r.resp.asTypeOf(Vec(nWays,UInt(dataCodeEntryBits.W)))
-  } 
+  // //Parity Decode
+  // val read_codes = Wire(Vec(2,Vec(nWays,UInt(dataCodeEntryBits.W) )))
+  // for(((dataArray,codeArray),i) <- dataArrays.zip(codeArrays).zipWithIndex){
+  //   read_codes(i) := DontCare//codeArray.io.r.resp.asTypeOf(Vec(nWays,UInt(dataCodeEntryBits.W)))
+  // } 
 
   //Parity Encode
   val write = io.write.bits
@@ -432,8 +432,8 @@ class ICacheDataArray(implicit p: Parameters) extends ICacheArray
   write_data_code := getECCFromBlock(write_data).asUInt
   write_data_bits := write_data
 
-  io.readResp.codes(0) := Mux( port_0_read_1_reg, read_codes(1) , read_codes(0))
-  io.readResp.codes(1) := Mux( port_1_read_0_reg, read_codes(0) , read_codes(1))
+  io.readResp.codes(0) := DontCare//Mux( port_0_read_1_reg, read_codes(1) , read_codes(0))
+  io.readResp.codes(1) := DontCare//Mux( port_1_read_0_reg, read_codes(0) , read_codes(1))
 
   io.write.ready := true.B
 

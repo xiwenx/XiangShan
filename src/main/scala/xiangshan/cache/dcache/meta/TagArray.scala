@@ -60,8 +60,8 @@ class TagArray(implicit p: Parameters) extends DCacheModule {
   val tag_array = Module(new SRAMTemplate(UInt(tagBits.W), set = nSets, way = nWays,
     shouldReset = false, holdRead = false, singlePort = true))
 
-  val ecc_array = Module(new SRAMTemplate(UInt(eccTagBits.W), set = nSets, way = nWays,
-    shouldReset = false, holdRead = false, singlePort = true))
+  // val ecc_array = Module(new SRAMTemplate(UInt(eccTagBits.W), set = nSets, way = nWays,
+  //   shouldReset = false, holdRead = false, singlePort = true))
 
   val wen = rst || io.write.valid
   tag_array.io.w.req.valid := wen
@@ -75,12 +75,12 @@ class TagArray(implicit p: Parameters) extends DCacheModule {
   val ecc_waddr = Mux(rst, rst_cnt, io.ecc_write.bits.idx)
   val ecc_wdata = Mux(rst, rstVal, io.ecc_write.bits.ecc)
   val ecc_wmask = Mux(rst || (nWays == 1).B, (-1).asSInt, io.ecc_write.bits.way_en.asSInt).asBools
-  ecc_array.io.w.req.valid := ecc_wen
-  ecc_array.io.w.req.bits.apply(
-    setIdx = ecc_waddr,
-    data = ecc_wdata,
-    waymask = VecInit(ecc_wmask).asUInt()
-  )
+  // ecc_array.io.w.req.valid := ecc_wen
+  // ecc_array.io.w.req.bits.apply(
+  //   setIdx = ecc_waddr,
+  //   data = ecc_wdata,
+  //   waymask = VecInit(ecc_wmask).asUInt()
+  // )
 
   // tag read
   val ren = io.read.fire()
@@ -90,9 +90,9 @@ class TagArray(implicit p: Parameters) extends DCacheModule {
   io.resp := tag_array.io.r.resp.data
 
   val ecc_ren = io.ecc_read.fire()
-  ecc_array.io.r.req.valid := ecc_ren
-  ecc_array.io.r.req.bits.apply(setIdx = io.ecc_read.bits.idx)
-  io.ecc_resp := ecc_array.io.r.resp.data
+  // ecc_array.io.r.req.valid := ecc_ren
+  // ecc_array.io.r.req.bits.apply(setIdx = io.ecc_read.bits.idx)
+  io.ecc_resp := DontCare//ecc_array.io.r.resp.data
 
   io.write.ready := !rst
   io.read.ready := !wen
