@@ -216,8 +216,8 @@ case class XSCoreParameters
   l2tlbParameters: L2TLBParameters = L2TLBParameters(),
   NumPerfCounters: Int = 16,
   icacheParameters: ICacheParameters = ICacheParameters(
-    tagECC = Some("parity"),
-    dataECC = Some("parity"),
+    tagECC = None,
+    dataECC = None,
     replacer = Some("setplru"),
     nMissEntries = 2,
     nProbeEntries = 2,
@@ -225,8 +225,8 @@ case class XSCoreParameters
     hasPrefetch = true,
   ),
   dcacheParametersOpt: Option[DCacheParameters] = Some(DCacheParameters(
-    tagECC = Some("secded"),
-    dataECC = Some("secded"),
+    tagECC = None,
+    dataECC = None,
     replacer = Some("setplru"),
     nMissEntries = 16,
     nProbeEntries = 8,
