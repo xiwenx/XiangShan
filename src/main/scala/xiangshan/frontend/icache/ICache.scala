@@ -32,7 +32,7 @@ import xiangshan.cache.mmu.{BlockTlbRequestIO, TlbReq}
 
 case class ICacheParameters(
     nSets: Int = 256,
-    nWays: Int = 8,
+    nWays: Int = 4,
     rowBits: Int = 64,
     nTLBEntries: Int = 32,
     tagECC: Option[String] = None,
