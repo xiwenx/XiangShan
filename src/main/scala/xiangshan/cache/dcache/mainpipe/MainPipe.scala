@@ -1548,4 +1548,11 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents {
     ("dcache_mp_total_penalty", PopCount(VecInit(Seq(s0_fire, s1_valid, s2_valid, s3_valid))))
   )
   generatePerfEvent()
+
+  val replace_cond = io.wb.fire() && io.wb.bits.voluntary
+  XSDebug(true, replace_cond, "DCache replace: addr = 0x%x, set = 0x%x, way_en = 0x%x\n",
+    io.wb.bits.addr,
+    get_idx(s3_req.vaddr),
+    s3_way_en
+  )
 }
