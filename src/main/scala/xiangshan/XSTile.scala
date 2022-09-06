@@ -133,6 +133,7 @@ class XSTile()(implicit p: Parameters) extends LazyModule
 
   l2cache match {
     case Some(l2) =>
+      l2.pf_recv_node.map(recv => recv := core.memBlock.pf_sender_opt.get)
       misc.l2_binder.get :*= l2.node :*= TLBuffer() :*= TLBuffer() :*= misc.l1_xbar
     case None =>
   }
