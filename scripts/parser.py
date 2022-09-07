@@ -23,7 +23,7 @@ origin_sram_mapping = [ # lib/wrapper      rtl
                         ["array_20_ext", "array_15_ext"],
                         ["array_22_ext", "array_16_ext"],
                         ["array_23_ext", "array_17_ext"],
-                        ["array_25_ext", "array_28_ext"],
+                        ["array_25_ext", "array_18_ext"],
                         ["array_26_ext", "array_19_ext"],
                         ["array_28_ext", "array_20_ext"],
                         ["array_29_ext", "array_21_ext"],
@@ -69,13 +69,13 @@ class VModule(object):
     submodule_re = re.compile(r'^\s*(\w+)\s*(#\(.*\)|)\s*(\w+)\s*\(\s*(|//.*)\s*$')
     array_ext_line_re = re.compile(r'^  array_(\d*)_ext (array_\d*_ext).*$')
     difftest_module_re = re.compile(r'^  Difftest\w+\s+\w+ \( //.*$')
-
+    
     def __init__(self, name):
         self.name = name
         self.lines = []
         self.io = []
         self.submodule = set()
-        self.in_difftest = False
+        self.in_difftest = False        
 
     def add_line(self, line):
         debug_dontCare = False
