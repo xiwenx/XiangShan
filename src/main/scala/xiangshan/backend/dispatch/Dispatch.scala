@@ -67,7 +67,7 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents {
     // singleStep
     val singleStep = Input(Bool())
     // lfst
-    val lfst = new DispatchLFSTIO
+    // val lfst = new DispatchLFSTIO
   })
 
   /**
@@ -124,18 +124,20 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents {
       updatedUop(i).psrc(0) := 0.U
     }
 
-    io.lfst.req(i).valid := io.fromRename(i).fire() && updatedUop(i).cf.storeSetHit
-    io.lfst.req(i).bits.isstore := isStore(i)
-    io.lfst.req(i).bits.ssid := updatedUop(i).cf.ssid
-    io.lfst.req(i).bits.robIdx := updatedUop(i).robIdx // speculatively assigned in rename
+    // io.lfst.req(i).valid := io.fromRename(i).fire() && updatedUop(i).cf.storeSetHit
+    // io.lfst.req(i).bits.isstore := isStore(i)
+    // io.lfst.req(i).bits.ssid := updatedUop(i).cf.ssid
+    // io.lfst.req(i).bits.robIdx := updatedUop(i).robIdx // speculatively assigned in rename
 
     // override load delay ctrl signal with store set result
-    if(StoreSetEnable) {
-      updatedUop(i).cf.loadWaitBit := io.lfst.resp(i).bits.shouldWait
-      updatedUop(i).cf.waitForRobIdx := io.lfst.resp(i).bits.robIdx
-    } else {
-      updatedUop(i).cf.loadWaitBit := isLs(i) && !isStore(i) && io.fromRename(i).bits.cf.loadWaitBit
-    }
+    // if(StoreSetEnable) {
+    //   updatedUop(i).cf.loadWaitBit := io.lfst.resp(i).bits.shouldWait
+    //   updatedUop(i).cf.waitForRobIdx := io.lfst.resp(i).bits.robIdx
+    // } else {
+    updatedUop(i).cf.waitForRobIdx := DontCare
+    updatedUop(i).cf.loadWaitStrict := false.B
+    updatedUop(i).cf.loadWaitBit := false.B // isLs(i) && !isStore(i) && io.fromRename(i).bits.cf.loadWaitBit
+    // }
 
     // update singleStep
     updatedUop(i).ctrl.singleStep := io.singleStep && (if (i == 0) singleStepStatus else true.B)

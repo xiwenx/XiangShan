@@ -95,6 +95,7 @@ class StatusArray(params: RSParams)(implicit p: Parameters) extends XSModule
       val success = Bool()
       val resptype = RSFeedbackType() // update credit if needs replay
       val dataInvalidSqIdx = new SqPtr
+      val waitForRobIdx = new RobPtr
     })))
     val stIssuePtr = if (params.checkWaitBit) Input(new SqPtr()) else null
     val memWaitUpdateReq = if (params.checkWaitBit) Flipped(new MemWaitUpdateReq) else null
@@ -125,14 +126,15 @@ class StatusArray(params: RSParams)(implicit p: Parameters) extends XSModule
     (stateMatch, dataMatch)
   }
 
-  def deqRespSel(i: Int) : (Bool, Bool, UInt, SqPtr) = {
+  def deqRespSel(i: Int) : (Bool, Bool, UInt, SqPtr, RobPtr) = {
     val mask = VecInit(io.deqResp.map(resp => resp.valid && resp.bits.rsMask(i)))
     XSError(PopCount(mask) > 1.U, p"feedbackVec ${Binary(mask.asUInt)} should be one-hot\n")
     val deqValid = mask.asUInt.orR
     val successVec = io.deqResp.map(_.bits.success)
     val respTypeVec = io.deqResp.map(_.bits.resptype)
     val dataInvalidSqIdxVec = io.deqResp.map(_.bits.dataInvalidSqIdx)
-    (deqValid, ParallelMux(mask, successVec), Mux1H(mask, respTypeVec), Mux1H(mask, dataInvalidSqIdxVec))
+    val waitForRobIdxVec = io.deqResp.map(_.bits.waitForRobIdx)
+    (deqValid, ParallelMux(mask, successVec), Mux1H(mask, respTypeVec), Mux1H(mask, dataInvalidSqIdxVec), Mux1H(mask, waitForRobIdxVec))
   }
 
   def enqUpdate(i: Int): (Bool, StatusEntry) = {
@@ -152,7 +154,7 @@ class StatusArray(params: RSParams)(implicit p: Parameters) extends XSModule
     // valid: when the entry holds a valid instruction, mark it true.
     // Set when (1) not (flushed or deq); AND (2) update.
     val realValid = updateValid(i) || status.valid
-    val (deqRespValid, deqRespSucc, deqRespType, deqRespDataInvalidSqIdx) = deqResp(i)
+    val (deqRespValid, deqRespSucc, deqRespType, deqRespDataInvalidSqIdx, deqRespWaitForRobIdx) = deqResp(i)
     val isFlushed = statusNext.robIdx.needFlush(io.redirect)
     flushedVec(i) := RegNext(realValid && isFlushed) || deqRespSucc
     statusNext.valid := realValid && !(isFlushed || deqRespSucc)
@@ -206,6 +208,12 @@ class StatusArray(params: RSParams)(implicit p: Parameters) extends XSModule
         statusNext.waitForStoreData := true.B
         XSError(status.valid && !isAfter(status.sqIdx, RegNext(RegNext(io.stIssuePtr))),
           "Previous store instructions are all issued. Should not trigger dataInvalid.\n")
+      }
+      when (deqNotGranted && deqRespType === RSFeedbackType.loadShouldWait) {
+        statusNext.blocked := true.B 
+        statusNext.waitForRobIdx := deqRespWaitForRobIdx
+        statusNext.waitForStoreData := false.B
+        statusNext.strictWait := false.B
       }
     }
 

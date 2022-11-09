@@ -119,6 +119,7 @@ class AtomicsUnit(implicit p: Parameters) extends XSModule with MemoryOpConstant
   io.feedbackSlow.bits.flushState := DontCare
   io.feedbackSlow.bits.sourceType := DontCare
   io.feedbackSlow.bits.dataInvalidSqIdx := DontCare
+  io.feedbackSlow.bits.waitForRobIdx := DontCare
 
   // tlb translation, manipulating signals && deal with exception
   // at the same time, flush sbuffer

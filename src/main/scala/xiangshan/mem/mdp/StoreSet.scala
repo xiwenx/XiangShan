@@ -21,6 +21,7 @@ import chisel3._
 import chisel3.util._
 import xiangshan._
 import utils._
+import xiangshan._
 import xiangshan.backend.rob.RobPtr
 
 // store set load violation predictor
@@ -327,18 +328,44 @@ class LFSTResp(implicit p: Parameters) extends XSBundle {
 }
 
 class DispatchLFSTIO(implicit p: Parameters) extends XSBundle {
-  val req = Vec(RenameWidth, Valid(new LFSTReq))
-  val resp = Vec(RenameWidth, Flipped(Valid(new LFSTResp)))
+  val req = Vec(exuParameters.LsExuCnt, Valid(new LFSTReq))
+}
+
+class LsToLFSTReq(implicit p: Parameters) extends XSBundle {
+  val ssid = UInt(SSIDWidth.W)
+}
+
+class LsToLFSTResp(implicit p: Parameters) extends XSBundle {
+  val shouldWait = Bool()
+  val robIdx = new RobPtr
+}
+
+class LsToLFSTQuery(implicit p: Parameters) extends XSBundle {
+  val req = Valid(new LsToLFSTReq)
+  val resp = Flipped(Valid(new LsToLFSTResp))
+}
+
+
+class LsToLFSTIO(implicit p: Parameters) extends XSBundle {
+  val req = Vec(exuParameters.LduCnt, Valid(new LsToLFSTReq))
+  val resp = Vec(exuParameters.LduCnt, Flipped(Valid(new LsToLFSTResp)))
 }
 
 // Last Fetched Store Table
 class LFST(implicit p: Parameters) extends XSModule {
   val io = IO(new Bundle {
     // when redirect, mark canceled store as invalid
+    //  From backend
     val redirect = Input(Valid(new Redirect))
     val dispatch = Flipped(new DispatchLFSTIO)
+
+    //  From memblock
+    val ls = Flipped(new LsToLFSTIO)
+
     // when store issued, mark store as invalid
-    val storeIssue = Vec(exuParameters.StuCnt, Flipped(Valid(new ExuInput)))
+    val storeIssue = Vec(exuParameters.StuCnt, Flipped(Valid(new MicroOp)))
+
+    //  Control signals
     val csrCtrl = Input(new CustomCSRCtrlIO)
   })
 
@@ -350,49 +377,18 @@ class LFST(implicit p: Parameters) extends XSModule {
     valid(i) := validVec(i).asUInt.orR
   })
 
-  // read LFST in rename stage
-  for (i <- 0 until RenameWidth) {
-    io.dispatch.resp(i).valid := io.dispatch.req(i).valid
-
-    // If store-load pair is in the same dispatch bundle, loadWaitBit should also be set for load
-    val hitInDispatchBundleVec = if(i > 0){
-      WireInit(VecInit((0 until i).map(j =>
-        io.dispatch.req(j).valid &&
-        io.dispatch.req(j).bits.isstore &&
-        io.dispatch.req(j).bits.ssid === io.dispatch.req(i).bits.ssid
-      )))
-    } else {
-      WireInit(VecInit(Seq(false.B))) // DontCare
-    }
-    val hitInDispatchBundle = hitInDispatchBundleVec.asUInt.orR
-    // Check if store set is valid in LFST
-    io.dispatch.resp(i).bits.shouldWait := (
-        (valid(io.dispatch.req(i).bits.ssid) || hitInDispatchBundle) && 
-        io.dispatch.req(i).valid &&
-        (!io.dispatch.req(i).bits.isstore || io.csrCtrl.storeset_wait_store)
-      ) && !io.csrCtrl.lvpred_disable || io.csrCtrl.no_spec_load
-    io.dispatch.resp(i).bits.robIdx := robIdxVec(io.dispatch.req(i).bits.ssid)(allocPtr(io.dispatch.req(i).bits.ssid)-1.U)
-    if(i > 0){
-      (0 until i).map(j =>
-        when(hitInDispatchBundleVec(j)){
-          io.dispatch.resp(i).bits.robIdx := io.dispatch.req(j).bits.robIdx
-        }
-      )
-    }
-  }
-
   // when store is issued, mark it as invalid
   (0 until exuParameters.StuCnt).map(i => {
     // TODO: opt timing
     (0 until LFSTWidth).map(j => {
-      when(io.storeIssue(i).valid && io.storeIssue(i).bits.uop.cf.storeSetHit && io.storeIssue(i).bits.uop.robIdx.value === robIdxVec(io.storeIssue(i).bits.uop.cf.ssid)(j).value){
-        validVec(io.storeIssue(i).bits.uop.cf.ssid)(j) := false.B
+      when(io.storeIssue(i).valid && io.storeIssue(i).bits.cf.storeSetHit && io.storeIssue(i).bits.robIdx.value === robIdxVec(io.storeIssue(i).bits.cf.ssid)(j).value){
+        validVec(io.storeIssue(i).bits.cf.ssid)(j) := false.B
       }
     })
   })
 
   // when store is dispatched, mark it as valid
-  (0 until RenameWidth).map(i => {
+  (0 until exuParameters.LsExuCnt).map(i => {
     when(io.dispatch.req(i).valid && io.dispatch.req(i).bits.isstore){
       val waddr = io.dispatch.req(i).bits.ssid
       val wptr = allocPtr(waddr)
@@ -423,4 +419,17 @@ class LFST(implicit p: Parameters) extends XSModule {
       })
     })
   }
+
+  //  Load pessimisitc prediction.
+  (0 until exuParameters.LduCnt).map(i => {
+    io.ls.resp(i).valid := RegNext(io.ls.req(i).valid)
+    io.ls.resp(i).bits.shouldWait := RegNext((
+        valid(io.dispatch.req(i).bits.ssid) && 
+        io.ls.req(i).valid &&
+        io.csrCtrl.storeset_wait_store
+      ) && !io.csrCtrl.lvpred_disable || io.csrCtrl.no_spec_load)
+    io.ls.resp(i).bits.robIdx := RegNext(robIdxVec(io.ls.req(i).bits.ssid)(allocPtr(io.ls.req(i).bits.ssid)-1.U))
+  })
+
+  //  End
 }

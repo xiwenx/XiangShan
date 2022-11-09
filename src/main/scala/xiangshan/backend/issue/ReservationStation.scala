@@ -28,6 +28,8 @@ import xiangshan.backend.fu.fpu.FMAMidResultIO
 import xiangshan.mem.{MemWaitUpdateReq, SqPtr}
 
 import scala.math.max
+import org.scalatest.tools.RunDoneListener
+import os.stat
 
 case class RSParams
 (
@@ -523,12 +525,15 @@ class ReservationStation(params: RSParams)(implicit p: Parameters) extends XSMod
       statusArray.io.deqResp(2*i).bits.success := io.feedback.get(i).feedbackSlow.bits.hit
       statusArray.io.deqResp(2*i).bits.resptype := io.feedback.get(i).feedbackSlow.bits.sourceType
       statusArray.io.deqResp(2*i).bits.dataInvalidSqIdx := io.feedback.get(i).feedbackSlow.bits.dataInvalidSqIdx
+      statusArray.io.deqResp(2*i).bits.waitForRobIdx := DontCare
+
       // feedbackFast, for load pipeline only
       statusArray.io.deqResp(2*i+1).valid := io.feedback.get(i).feedbackFast.valid
       statusArray.io.deqResp(2*i+1).bits.rsMask := UIntToOH(io.feedback.get(i).feedbackFast.bits.rsIdx)
       statusArray.io.deqResp(2*i+1).bits.success := io.feedback.get(i).feedbackFast.bits.hit
       statusArray.io.deqResp(2*i+1).bits.resptype := io.feedback.get(i).feedbackFast.bits.sourceType
       statusArray.io.deqResp(2*i+1).bits.dataInvalidSqIdx := DontCare
+      statusArray.io.deqResp(2*i+1).bits.waitForRobIdx := io.feedback.get(i).feedbackFast.bits.waitForRobIdx
     } else {
       // For FMAs that can be scheduled multiple times, only when
       // all source operands are ready we dequeue the instruction.
@@ -538,12 +543,15 @@ class ReservationStation(params: RSParams)(implicit p: Parameters) extends XSMod
       statusArray.io.deqResp(2*i).bits.success := s2_deq(i).ready
       statusArray.io.deqResp(2*i).bits.resptype := DontCare
       statusArray.io.deqResp(2*i).bits.dataInvalidSqIdx := DontCare
+      statusArray.io.deqResp(2*i).bits.waitForRobIdx := DontCare
+
       val allSrcReady1 = if (params.hasMidState) statusArray.io.update(i).data.allSrcReady else true.B
       statusArray.io.deqResp(2*i+1).valid := s1_issue_dispatch(i) && s1_out(i).ready && allSrcReady1
       statusArray.io.deqResp(2*i+1).bits.rsMask := s1_allocatePtrOH_dup.head(i)
       statusArray.io.deqResp(2*i+1).bits.success := s2_deq(i).ready
       statusArray.io.deqResp(2*i+1).bits.resptype := DontCare
       statusArray.io.deqResp(2*i+1).bits.dataInvalidSqIdx := DontCare
+      statusArray.io.deqResp(2*i+1).bits.waitForRobIdx := DontCare
     }
 
     if (io.fastWakeup.isDefined) {
@@ -565,6 +573,7 @@ class ReservationStation(params: RSParams)(implicit p: Parameters) extends XSMod
     statusArray.io.deqResp.last.bits.success := ParallelMux(s1_issue_oldest, s2_deq.map(_.ready))
     statusArray.io.deqResp.last.bits.resptype := DontCare
     statusArray.io.deqResp.last.bits.dataInvalidSqIdx := DontCare
+    statusArray.io.deqResp.last.bits.waitForRobIdx := DontCare
   }
   statusArray.io.updateMidState := 0.U
 

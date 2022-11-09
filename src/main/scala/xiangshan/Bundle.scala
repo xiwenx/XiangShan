@@ -61,6 +61,7 @@ object RSFeedbackType {
   val dataInvalid = 2.U(3.W)
   val bankConflict = 3.U(3.W)
   val ldVioCheckRedo = 4.U(3.W)
+  val loadShouldWait = 5.U(3.W)
 
   def apply() = UInt(3.W)
 }
@@ -391,6 +392,7 @@ class RSFeedback(implicit p: Parameters) extends XSBundle {
   val flushState = Bool()
   val sourceType = RSFeedbackType()
   val dataInvalidSqIdx = new SqPtr
+  val waitForRobIdx = new RobPtr
 }
 
 class MemRSFeedbackIO(implicit p: Parameters) extends XSBundle {

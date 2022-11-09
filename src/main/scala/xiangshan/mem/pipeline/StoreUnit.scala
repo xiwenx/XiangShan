@@ -20,10 +20,11 @@ import chipsalliance.rocketchip.config.Parameters
 import chisel3._
 import chisel3.util._
 import utils._
-import xiangshan.ExceptionNO._
 import xiangshan._
+import xiangshan.ExceptionNO._
 import xiangshan.backend.fu.PMPRespBundle
 import xiangshan.cache.mmu.{TlbCmd, TlbReq, TlbRequestIO, TlbResp}
+import org.scalatest.tools.RunDoneListener
 
 // Store Pipeline Stage 0
 // Generate addr, use addr to query DCache and DTLB
@@ -97,6 +98,8 @@ class StoreUnit_S1(implicit p: Parameters) extends XSModule {
     val lsq = ValidIO(new LsPipelineBundle())
     val dtlbResp = Flipped(DecoupledIO(new TlbResp()))
     val rsFeedback = ValidIO(new RSFeedback)
+
+    val issue = Valid(new MicroOp)
   })
 
   // mmio cbo decoder
@@ -113,6 +116,9 @@ class StoreUnit_S1(implicit p: Parameters) extends XSModule {
 
   io.dtlbResp.ready := true.B // TODO: why dtlbResp needs a ready?
 
+  io.issue.valid := io.in.valid  && !s1_tlb_miss
+  io.issue.bits := io.in.bits.uop
+
   // Send TLB feedback to store issue queue
   // Store feedback is generated in store_s1, sent to RS in store_s2
   io.rsFeedback.valid := io.in.valid
@@ -126,6 +132,7 @@ class StoreUnit_S1(implicit p: Parameters) extends XSModule {
     io.rsFeedback.bits.rsIdx
   )
   io.rsFeedback.bits.dataInvalidSqIdx := DontCare
+  io.rsFeedback.bits.waitForRobIdx := DontCare
 
   // get paddr from dtlb, check if rollback is needed
   // writeback store inst to lsq
@@ -209,6 +216,8 @@ class StoreUnit(implicit p: Parameters) extends XSModule {
     val lsq = ValidIO(new LsPipelineBundle)
     val lsq_replenish = Output(new LsPipelineBundle())
     val stout = DecoupledIO(new ExuOutput) // writeback store
+
+    val issue = Valid(new MicroOp)
   })
 
   val store_s0 = Module(new StoreUnit_S0)
@@ -228,6 +237,7 @@ class StoreUnit(implicit p: Parameters) extends XSModule {
   store_s1.io.dtlbResp <> io.tlb.resp
   io.lsq <> store_s1.io.lsq
 
+  io.issue := store_s1.io.issue
   PipelineConnect(store_s1.io.out, store_s2.io.in, true.B, store_s1.io.out.bits.uop.robIdx.needFlush(io.redirect))
 
   // feedback tlb miss to RS in store_s2

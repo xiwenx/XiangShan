@@ -29,6 +29,7 @@ import xiangshan.backend.rob.RobLsqIO
 import xiangshan.cache._
 import xiangshan.cache.mmu.{VectorTlbPtwIO, TLBNonBlock, TlbReplace}
 import xiangshan.mem._
+import xiangshan.mem.mdp._
 
 class Std(implicit p: Parameters) extends FunctionUnit {
   io.in.ready := true.B
@@ -123,11 +124,20 @@ class MemBlockImp(outer: MemBlock) extends LazyModuleImp(outer)
   val stdExeUnits = Seq.fill(exuParameters.StuCnt)(Module(new StdExeUnit))
   val stData = stdExeUnits.map(_.io.out)
   val exeUnits = loadUnits ++ storeUnits
+  val lfst = Module(new LFST)
 
   loadUnits.zipWithIndex.map(x => x._1.suggestName("LoadUnit_"+x._2))
   storeUnits.zipWithIndex.map(x => x._1.suggestName("StoreUnit_"+x._2))
 
   val atomicsUnit = Module(new AtomicsUnit)
+
+  //  lfst allocate
+  for (i <- 0 until exuParameters.LsExuCnt) {
+    lfst.io.dispatch.req(i).valid := io.enqLsq.req(i).valid
+    lfst.io.dispatch.req(i).bits.isstore := io.enqLsq.needAlloc(i)(1)
+    lfst.io.dispatch.req(i).bits.robIdx := io.enqLsq.req(i).bits.robIdx
+    lfst.io.dispatch.req(i).bits.ssid := io.enqLsq.req(i).bits.cf.ssid
+  }
 
   // Atom inst comes from sta / std, then its result
   // will be writebacked using load writeback port
@@ -251,6 +261,8 @@ class MemBlockImp(outer: MemBlock) extends LazyModuleImp(outer)
     PrintTriggerInfo(tEnable(j), tdata(j))
 
   // LoadUnit
+  lfst.io.redirect <> redirect
+  lfst.io.csrCtrl := io.csrCtrl  
   for (i <- 0 until exuParameters.LduCnt) {
     loadUnits(i).io.redirect <> redirect
     loadUnits(i).io.feedbackSlow <> io.rsfeedback(i).feedbackSlow
@@ -273,6 +285,9 @@ class MemBlockImp(outer: MemBlock) extends LazyModuleImp(outer)
     loadUnits(i).io.tlb <> dtlb_reqs.take(exuParameters.LduCnt)(i)
     // pmp
     loadUnits(i).io.pmp <> pmp_check(i).resp
+    // lfst
+    lfst.io.ls.req(i) := loadUnits(i).io.lfst.req
+    loadUnits(i).io.lfst.resp := lfst.io.ls.resp(i)
 
     // load to load fast forward: load(i) prefers data(i)
     val fastPriority = (i until exuParameters.LduCnt) ++ (0 until i)
@@ -358,6 +373,8 @@ class MemBlockImp(outer: MemBlock) extends LazyModuleImp(outer)
     // dtlb
     stu.io.tlb          <> dtlb_reqs.drop(exuParameters.LduCnt)(i)
     stu.io.pmp          <> pmp_check(i+exuParameters.LduCnt).resp
+    // lfst
+    lfst.io.storeIssue(i) := stu.io.issue
 
     // store unit does not need fast feedback
     io.rsfeedback(exuParameters.LduCnt + i).feedbackFast := DontCare

@@ -26,6 +26,7 @@ import xiangshan.backend.rob.RobLsqIO
 import xiangshan.cache._
 import xiangshan.frontend.FtqPtr
 import xiangshan.ExceptionNO._
+import xiangshan.mem.mdp.LsToLFSTIO
 
 class LqPtr(implicit p: Parameters) extends CircularQueuePtr[LqPtr](
   p => p(XSCoreParamsKey).LoadQueueSize
@@ -647,6 +648,8 @@ class LoadQueue(implicit p: Parameters) extends XSModule
       (!lastlastCycleRedirect.valid || isBefore(uop.robIdx, lastlastCycleRedirect.bits.robIdx))
   }
 
+  val fakeRollback = rollbackL1WbVReg && (rollbackUopExt.uop.robIdx === rollbackL1WbReg.uop.robIdx) && io.rollback.valid
+  
   io.rollback.bits.robIdx := rollbackUop.robIdx
   io.rollback.bits.ftqIdx := rollbackUop.cf.ftqPtr
   io.rollback.bits.stFtqIdx := rollbackStFtqIdx
@@ -874,11 +877,13 @@ class LoadQueue(implicit p: Parameters) extends XSModule
   XSPerfAccumulate("writeback_success", PopCount(VecInit(io.ldout.map(i => i.fire()))))
   XSPerfAccumulate("writeback_blocked", PopCount(VecInit(io.ldout.map(i => i.valid && !i.ready))))
   XSPerfAccumulate("utilization_miss", PopCount((0 until LoadQueueSize).map(i => allocated(i) && miss(i))))
+  XSPerfAccumulate("fakeRollback", fakeRollback)
 
   val perfValidCount = RegNext(validCount)
 
   val perfEvents = Seq(
     ("rollback         ", io.rollback.valid),
+    ("fakeRollback     ", fakeRollback),
     ("mmioCycle        ", uncacheState =/= s_idle),
     ("mmio_Cnt         ", io.uncache.req.fire()),
     ("refill           ", io.refill.valid),
