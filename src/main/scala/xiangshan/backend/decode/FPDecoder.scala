@@ -37,76 +37,78 @@ class FPDecoder(implicit p: Parameters) extends XSModule{
   val d = BitPat(FPU.D)
   val i = BitPat(FPU.D)
 
-  val default = List(X,X,X,N,N,N,X,X,X)
+  val default = List(N,X,X,X,N,N,N,X,X,X)
 
   // isAddSub tagIn tagOut fromInt wflags fpWen div sqrt fcvt
   val single: Array[(BitPat, List[BitPat])] = Array(
+    // i2v
+    VMV_S_X  -> List(Y,X,X,X,N,N,N,X,X,X)
     // IntToFP
-    FMV_W_X  -> List(N,i,s,Y,N,Y,N,N,N),
-    FCVT_S_W -> List(N,i,s,Y,Y,Y,N,N,Y),
-    FCVT_S_WU-> List(N,i,s,Y,Y,Y,N,N,Y),
-    FCVT_S_L -> List(N,i,s,Y,Y,Y,N,N,Y),
-    FCVT_S_LU-> List(N,i,s,Y,Y,Y,N,N,Y),
+    FMV_W_X  -> List(N,N,i,s,Y,N,Y,N,N,N),
+    FCVT_S_W -> List(N,N,i,s,Y,Y,Y,N,N,Y),
+    FCVT_S_WU-> List(N,N,i,s,Y,Y,Y,N,N,Y),
+    FCVT_S_L -> List(N,N,i,s,Y,Y,Y,N,N,Y),
+    FCVT_S_LU-> List(N,N,i,s,Y,Y,Y,N,N,Y),
     // FPToInt
-    FMV_X_W  -> List(N,d,i,N,N,N,N,N,N), // dont box result of fmv.fp.int
-    FCLASS_S -> List(N,s,i,N,N,N,N,N,N),
-    FCVT_W_S -> List(N,s,i,N,Y,N,N,N,Y),
-    FCVT_WU_S-> List(N,s,i,N,Y,N,N,N,Y),
-    FCVT_L_S -> List(N,s,i,N,Y,N,N,N,Y),
-    FCVT_LU_S-> List(N,s,i,N,Y,N,N,N,Y),
-    FEQ_S    -> List(N,s,i,N,Y,N,N,N,N),
-    FLT_S    -> List(N,s,i,N,Y,N,N,N,N),
-    FLE_S    -> List(N,s,i,N,Y,N,N,N,N),
+    FMV_X_W  -> List(N,N,d,i,N,N,N,N,N,N), // dont box result of fmv.fp.int
+    FCLASS_S -> List(N,N,s,i,N,N,N,N,N,N),
+    FCVT_W_S -> List(N,N,s,i,N,Y,N,N,N,Y),
+    FCVT_WU_S-> List(N,N,s,i,N,Y,N,N,N,Y),
+    FCVT_L_S -> List(N,N,s,i,N,Y,N,N,N,Y),
+    FCVT_LU_S-> List(N,N,s,i,N,Y,N,N,N,Y),
+    FEQ_S    -> List(N,N,s,i,N,Y,N,N,N,N),
+    FLT_S    -> List(N,N,s,i,N,Y,N,N,N,N),
+    FLE_S    -> List(N,N,s,i,N,Y,N,N,N,N),
     // FPToFP
-    FSGNJ_S  -> List(N,s,s,N,N,Y,N,N,N),
-    FSGNJN_S -> List(N,s,s,N,N,Y,N,N,N),
-    FSGNJX_S -> List(N,s,s,N,N,Y,N,N,N),
-    FMIN_S   -> List(N,s,s,N,Y,Y,N,N,N),
-    FMAX_S   -> List(N,s,s,N,Y,Y,N,N,N),
-    FADD_S   -> List(Y,s,s,N,Y,Y,N,N,N),
-    FSUB_S   -> List(Y,s,s,N,Y,Y,N,N,N),
-    FMUL_S   -> List(N,s,s,N,Y,Y,N,N,N),
-    FMADD_S  -> List(N,s,s,N,Y,Y,N,N,N),
-    FMSUB_S  -> List(N,s,s,N,Y,Y,N,N,N),
-    FNMADD_S -> List(N,s,s,N,Y,Y,N,N,N),
-    FNMSUB_S -> List(N,s,s,N,Y,Y,N,N,N),
-    FDIV_S   -> List(N,s,s,N,Y,Y,Y,N,N),
-    FSQRT_S  -> List(N,s,s,N,Y,Y,N,Y,N)
+    FSGNJ_S  -> List(N,N,s,s,N,N,Y,N,N,N),
+    FSGNJN_S -> List(N,N,s,s,N,N,Y,N,N,N),
+    FSGNJX_S -> List(N,N,s,s,N,N,Y,N,N,N),
+    FMIN_S   -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FMAX_S   -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FADD_S   -> List(N,Y,s,s,N,Y,Y,N,N,N),
+    FSUB_S   -> List(N,Y,s,s,N,Y,Y,N,N,N),
+    FMUL_S   -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FMADD_S  -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FMSUB_S  -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FNMADD_S -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FNMSUB_S -> List(N,N,s,s,N,Y,Y,N,N,N),
+    FDIV_S   -> List(N,N,s,s,N,Y,Y,Y,N,N),
+    FSQRT_S  -> List(N,N,s,s,N,Y,Y,N,Y,N)
   )
 
 
   // isAddSub tagIn tagOut fromInt wflags fpWen div sqrt fcvt
   val double: Array[(BitPat, List[BitPat])] = Array(
-    FMV_D_X  -> List(N,i,d,Y,N,Y,N,N,N),
-    FCVT_D_W -> List(N,i,d,Y,Y,Y,N,N,Y),
-    FCVT_D_WU-> List(N,i,d,Y,Y,Y,N,N,Y),
-    FCVT_D_L -> List(N,i,d,Y,Y,Y,N,N,Y),
-    FCVT_D_LU-> List(N,i,d,Y,Y,Y,N,N,Y),
-    FMV_X_D  -> List(N,d,i,N,N,N,N,N,N),
-    FCLASS_D -> List(N,d,i,N,N,N,N,N,N),
-    FCVT_W_D -> List(N,d,i,N,Y,N,N,N,Y),
-    FCVT_WU_D-> List(N,d,i,N,Y,N,N,N,Y),
-    FCVT_L_D -> List(N,d,i,N,Y,N,N,N,Y),
-    FCVT_LU_D-> List(N,d,i,N,Y,N,N,N,Y),
-    FCVT_S_D -> List(N,d,s,N,Y,Y,N,N,Y),
-    FCVT_D_S -> List(N,s,d,N,Y,Y,N,N,Y),
-    FEQ_D    -> List(N,d,i,N,Y,N,N,N,N),
-    FLT_D    -> List(N,d,i,N,Y,N,N,N,N),
-    FLE_D    -> List(N,d,i,N,Y,N,N,N,N),
-    FSGNJ_D  -> List(N,d,d,N,N,Y,N,N,N),
-    FSGNJN_D -> List(N,d,d,N,N,Y,N,N,N),
-    FSGNJX_D -> List(N,d,d,N,N,Y,N,N,N),
-    FMIN_D   -> List(N,d,d,N,Y,Y,N,N,N),
-    FMAX_D   -> List(N,d,d,N,Y,Y,N,N,N),
-    FADD_D   -> List(Y,d,d,N,Y,Y,N,N,N),
-    FSUB_D   -> List(Y,d,d,N,Y,Y,N,N,N),
-    FMUL_D   -> List(N,d,d,N,Y,Y,N,N,N),
-    FMADD_D  -> List(N,d,d,N,Y,Y,N,N,N),
-    FMSUB_D  -> List(N,d,d,N,Y,Y,N,N,N),
-    FNMADD_D -> List(N,d,d,N,Y,Y,N,N,N),
-    FNMSUB_D -> List(N,d,d,N,Y,Y,N,N,N),
-    FDIV_D   -> List(N,d,d,N,Y,Y,Y,N,N),
-    FSQRT_D  -> List(N,d,d,N,Y,Y,N,Y,N)
+    FMV_D_X  -> List(N,N,i,d,Y,N,Y,N,N,N),
+    FCVT_D_W -> List(N,N,i,d,Y,Y,Y,N,N,Y),
+    FCVT_D_WU-> List(N,N,i,d,Y,Y,Y,N,N,Y),
+    FCVT_D_L -> List(N,N,i,d,Y,Y,Y,N,N,Y),
+    FCVT_D_LU-> List(N,N,i,d,Y,Y,Y,N,N,Y),
+    FMV_X_D  -> List(N,N,d,i,N,N,N,N,N,N),
+    FCLASS_D -> List(N,N,d,i,N,N,N,N,N,N),
+    FCVT_W_D -> List(N,N,d,i,N,Y,N,N,N,Y),
+    FCVT_WU_D-> List(N,N,d,i,N,Y,N,N,N,Y),
+    FCVT_L_D -> List(N,N,d,i,N,Y,N,N,N,Y),
+    FCVT_LU_D-> List(N,N,d,i,N,Y,N,N,N,Y),
+    FCVT_S_D -> List(N,N,d,s,N,Y,Y,N,N,Y),
+    FCVT_D_S -> List(N,N,s,d,N,Y,Y,N,N,Y),
+    FEQ_D    -> List(N,N,d,i,N,Y,N,N,N,N),
+    FLT_D    -> List(N,N,d,i,N,Y,N,N,N,N),
+    FLE_D    -> List(N,N,d,i,N,Y,N,N,N,N),
+    FSGNJ_D  -> List(N,N,d,d,N,N,Y,N,N,N),
+    FSGNJN_D -> List(N,N,d,d,N,N,Y,N,N,N),
+    FSGNJX_D -> List(N,N,d,d,N,N,Y,N,N,N),
+    FMIN_D   -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FMAX_D   -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FADD_D   -> List(N,Y,d,d,N,Y,Y,N,N,N),
+    FSUB_D   -> List(N,Y,d,d,N,Y,Y,N,N,N),
+    FMUL_D   -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FMADD_D  -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FMSUB_D  -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FNMADD_D -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FNMSUB_D -> List(N,N,d,d,N,Y,Y,N,N,N),
+    FDIV_D   -> List(N,N,d,d,N,Y,Y,Y,N,N),
+    FSQRT_D  -> List(N,N,d,d,N,Y,Y,N,Y,N)
   )
 
   val table = single ++ double
